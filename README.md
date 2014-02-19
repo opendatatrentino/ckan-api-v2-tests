@@ -2,10 +2,10 @@
 
 ## Usage
 
-1- install requirements listed in ``requirements.txt``
-2- have a look at ``run-tests.sh`` for the environment variables
+1. install requirements listed in ``requirements.txt``
+2. have a look at ``run-tests.sh`` for the environment variables
    that need to be set
-3- launch ``py.test`` to actually run the tests
+3. launch ``py.test`` to actually run the tests
 
 ## Requirements
 
