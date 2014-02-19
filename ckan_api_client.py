@@ -217,3 +217,19 @@ class CkanClient(object):
         path = '/api/2/rest/licenses'
         response = self.request('GET', path)
         return response.json()
+
+    ## --- tags ---
+
+    def list_tags(self):
+        path = '/api/2/rest/tag'
+        response = self.request('GET', path)
+        return response.json()
+
+    def list_datasets_with_tag(self, tag_id):
+        path = '/api/2/rest/tag/{0}'.format(tag_id)
+        response = self.request('GET', path)
+        return response.json()
+
+    def iter_datasets_with_tag(self, tag_id):
+        for dataset_id in self.list_datasets_with_tag():
+            yield self.get_dataset(dataset_id)
