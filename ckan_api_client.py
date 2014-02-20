@@ -65,6 +65,10 @@ class CkanClient(object):
         self.base_url = base_url
         self.api_key = api_key
 
+    @property
+    def anonymous(self):
+        return CkanClient(self.base_url)
+
     def request(self, method, path, **kwargs):
         headers = kwargs.get('headers') or {}
         kwargs['headers'] = headers
@@ -78,8 +82,6 @@ class CkanClient(object):
             if not isinstance(kwargs['data'], basestring):
                 kwargs['data'] = json.dumps(kwargs['data'])
                 headers['content-type'] = 'application/json'
-                pass
-            pass
 
         if isinstance(path, (list, tuple)):
             path = '/'.join(path)
@@ -137,7 +139,7 @@ class CkanClient(object):
 
         ## Dictionary holding the actual data to be sent
         ## for performing the update
-        updates_dict = {}
+        updates_dict = {'id': dataset_id}
 
         ## Core fields
         ##----------------------------------------
@@ -161,18 +163,20 @@ class CkanClient(object):
         ## update: {'a': 'foo'}
         ## result: {'a': 'foo', 'b': 'bb', 'c': 'cc'}
 
-        EXTRAS_FIELD = 'extras'  # avoid confusion
+        ## db: {'a': 'aa', 'b': 'bb', 'c': 'cc'}
+        ## update: {}
+        ## db: {'a': 'aa', 'b': 'bb', 'c': 'cc'}
 
-        updates_dict[EXTRAS_FIELD] = dict(original_dataset[EXTRAS_FIELD])
+        EXTRAS_FIELD = 'extras'  # to avoid confusion
+
+        updates_dict[EXTRAS_FIELD] = {}
 
         if EXTRAS_FIELD in updates:
-            for key, value in updates[EXTRAS_FIELD].iteritems():
-                updates_dict[EXTRAS_FIELD][key] = value
-                # if value is None:
-                #     updates_dict.pop(key, None)
-                # else:
-                #     updates_dict[EXTRAS_FIELD][key] = value
+            # Notes: setting a field to 'None' will delete it.
+            updates_dict[EXTRAS_FIELD].update(updates[EXTRAS_FIELD])
 
+        ## These fields need to be passed again or it will just
+        ## be flushed..
         FIELDS_THAT_NEED_TO_BE_PASSED = [
             'groups', 'resources', 'relationships'
         ]
@@ -187,10 +191,10 @@ class CkanClient(object):
 
         return self.put_dataset(dataset_id, updates_dict)
 
-    def delete_dataset(self, dataset_id, dataset):
+    def delete_dataset(self, dataset_id):
         path = '/api/2/rest/dataset/{0}'.format(dataset_id)
-        response = self.request('DELETE', path)
-        return response.json()
+        self.request('DELETE', path, data={'id': dataset_id})
+        # doesn't return anything in the response body..
 
     ## --- groups ---
 
