@@ -10,48 +10,7 @@ them from being deleted.
 import copy
 import time
 
-
-DATASET_FIELDS = {}
-DATASET_FIELDS['core'] = [
-    'author', 'author_email', 'license_id', 'maintainer', 'maintainer_email',
-    'name', 'notes', 'owner_org', 'private', 'state', 'type', 'url'
-]
-DATASET_FIELDS['cruft'] = [
-    'ckan_url', 'creator_user_id', 'isopen', 'license', 'license_title',
-    'license_url', 'metadata_created', 'metadata_modified', 'num_resources',
-    'num_tags', 'organization', 'ratings_average', 'ratings_count',
-    'revision_id', 'version'
-]
-DATASET_FIELDS['keys'] = ['id']
-DATASET_FIELDS['special'] = ['extras', 'groups', 'relationships', 'resources']
-
-
-RESOURCE_FIELDS = {}
-RESOURCE_FIELDS['core'] = [
-    "description",
-    "format",
-    "mimetype",
-    "mimetype_inner",
-    "name",
-    "position",
-    "resource_type",
-    "size",
-    "url",
-    "url_type",
-]
-RESOURCE_FIELDS['cruft'] = [
-    "cache_last_updated",
-    "cache_url",
-    "created",
-    "hash",
-    "last_modified",
-    "package_id",
-    "resource_group_id",
-    "webstore_last_updated",
-    "webstore_url",
-]
-RESOURCE_FIELDS['keys'] = ['id']
-RESOURCE_FIELDS['special'] = []
+from ckan_api_client import DATASET_FIELDS, RESOURCE_FIELDS
 
 
 OUR_GROUPS = [
@@ -221,6 +180,16 @@ def test_data_loss_on_update(ckan_client):
 
     # Ok, now we can start updating and see what happens..
     #------------------------------------------------------------
+    updates = {'title': "My new dataset title"}
+
+    expected_updated_dataset = copy.deepcopy(our_dataset)
+    expected_updated_dataset.update(updates)
+
+    updated_dataset = ckan_client.update_dataset(dataset_id, updates)
+    retrieved_dataset = ckan_client.get_dataset(dataset_id)
+    assert updated_dataset == retrieved_dataset
+
+    check_dataset(updated_dataset, expected_updated_dataset)
 
 
 def check_dataset(dataset, expected):
@@ -232,8 +201,6 @@ def check_dataset(dataset, expected):
 
     assert dataset['extras'] == expected['extras']
     assert sorted(dataset['groups']) == sorted(expected['groups'])
-    # assert sorted(dataset['relationships']) \
-    #     == sorted(expected['relationships'])
 
     ## Check resources
     _dataset_resources = dict((x['url'], x) for x in dataset['resources'])

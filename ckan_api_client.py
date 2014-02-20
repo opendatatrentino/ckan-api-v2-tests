@@ -8,56 +8,47 @@ import urlparse
 import requests
 
 
-## These are the only fields that should be needed..
-CKAN_CORE_DATASET_FIELDS = [
-    'id',
-    'author',
-    'author_email',
-    'creator_user_id',
-    'license_id',
-    'maintainer',
-    'maintainer_email',
-    'name',
-    'notes',
-    'owner_org',
-    'private',
-    'title',
-    'type',
-    'url',
-    'version',
-    # organization / owner_org?
-    # relationshipts, resources
+DATASET_FIELDS = {}
+DATASET_FIELDS['core'] = [
+    'author', 'author_email', 'license_id', 'maintainer', 'maintainer_email',
+    'name', 'notes', 'owner_org', 'private', 'state', 'type', 'url'
 ]
+DATASET_FIELDS['cruft'] = [
+    'ckan_url', 'creator_user_id', 'isopen', 'license', 'license_title',
+    'license_url', 'metadata_created', 'metadata_modified', 'num_resources',
+    'num_tags', 'organization', 'ratings_average', 'ratings_count',
+    'revision_id', 'version'
+]
+DATASET_FIELDS['keys'] = ['id']
+DATASET_FIELDS['special'] = ['extras', 'groups', 'relationships', 'resources']
 
-CKAN_CORE_DATASET_RELATED_FIELDS = [
-    'extras', 'relationships', 'resources'
-]
 
-## Beware that even resources have ids!
-CKAN_CORE_RESOURCE_FIELDS = [
-    'id',
-    'position',
-    'cache_last_updated',
-    'cache_url',
-    'created',
-    'description',
-    'extras',
-    'format',
-    'hash',
-    'last_modified',
-    'mimetype',
-    'mimetype_inner',
-    'name',
-    'resource_group_id',
-    'resource_type',
-    'revision_id',
-    'size',
-    'state',
-    'url',
-    'url_type',
-    'webstore_last_updated',
-    'webstore_url',
+RESOURCE_FIELDS = {}
+RESOURCE_FIELDS['core'] = [
+    "description",
+    "format",
+    "mimetype",
+    "mimetype_inner",
+    "name",
+    "position",
+    "resource_type",
+    "size",
+    "url",
+    "url_type",
 ]
+RESOURCE_FIELDS['cruft'] = [
+    "cache_last_updated",
+    "cache_url",
+    "created",
+    "hash",
+    "last_modified",
+    "package_id",
+    "resource_group_id",
+    "webstore_last_updated",
+    "webstore_url",
+]
+RESOURCE_FIELDS['keys'] = ['id']
+RESOURCE_FIELDS['special'] = []
 
 
 class HTTPError(Exception):
@@ -128,11 +119,60 @@ class CkanClient(object):
         response = self.request('PUT', path, data=dataset)
         return response.json()
 
-    def partial_update_dataset(self, dataset_id, updates):
-        """Trickery to update a dataset"""
+    def update_dataset(self, dataset_id, updates):
+        """
+        Trickery to perform a safe partial update of a dataset.
+        """
 
-        dataset = self.get_dataset(dataset_id)
-        pass
+        ##==================================================
+        ## Notes
+        ## - "core" fields seems to be kept
+        ## - ..but "extras" need to be passed back again
+        ## - groups?
+        ## - resources?
+        ## - relationships?
+        ##==================================================
+
+        original_dataset = self.get_dataset(dataset_id)
+
+        ## Dictionary holding the actual data to be sent
+        ## for performing the update
+        updates_dict = {}
+
+        ## Core fields
+        ##----------------------------------------
+
+        for field in DATASET_FIELDS['core']:
+            if field in updates:
+                updates_dict[field] = updates[field]
+            else:
+                updates_dict[field] = original_dataset[field]
+
+        ## Extras fields
+        ##----------------------------------------
+
+        updates_dict['extras'] = dict(original_dataset['extras'])
+
+        if 'extras' in updates:
+            for key, value in updates['extra']:
+                if value is None:
+                    updates_dict.pop(key, None)
+                else:
+                    updates_dict['extras'] = value
+
+        FIELDS_THAT_NEED_TO_BE_PASSED = [
+            'groups', 'resources', 'relationships'
+        ]
+        for field in FIELDS_THAT_NEED_TO_BE_PASSED:
+            if field in updates:
+                updates_dict[field] = updates[field]
+            else:
+                updates_dict[field] = original_dataset[field]
+
+        ## Actually perform the update
+        ##----------------------------------------
+
+        return self.put_dataset(dataset_id, updates_dict)
 
     def delete_dataset(self, dataset_id, dataset):
         path = '/api/2/rest/dataset/{0}'.format(dataset_id)
