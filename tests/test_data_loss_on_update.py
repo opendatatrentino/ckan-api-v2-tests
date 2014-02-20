@@ -8,6 +8,12 @@ them from being deleted.
 """
 
 ##----------------------------------------------------------------------
+## todo: write test to check updating "groups"
+##----------------------------------------------------------------------
+## todo: write test to check updating "relationships"
+##----------------------------------------------------------------------
+## todo: write test to check updating "resources"
+##----------------------------------------------------------------------
 ## todo: check that resources keep the same id upon update
 ##       - create dataset with some resources
 ##       - update dataset adding a resource and removing another
@@ -18,9 +24,10 @@ them from being deleted.
 import copy
 import random
 import string
-import time
 
-from ckan_api_client import DATASET_FIELDS, RESOURCE_FIELDS
+import pytest
+
+from ckan_api_client import DATASET_FIELDS, RESOURCE_FIELDS, HTTPError
 
 
 OUR_GROUPS = [
@@ -130,7 +137,7 @@ OUR_DATASET = {
 }
 
 
-def test_data_loss_on_update(ckan_client):
+def test_data_loss_on_update(request, ckan_client):
     """
     Strategy:
 
@@ -144,6 +151,7 @@ def test_data_loss_on_update(ckan_client):
     ## Create the dataset
     created_dataset = ckan_client.post_dataset(our_dataset)
     dataset_id = created_dataset['id']
+    request.addfinalizer(lambda: ckan_client.delete_dataset(dataset_id))
 
     ## Make sure that the thing we created makes sense
     retrieved_dataset = ckan_client.get_dataset(dataset_id)
@@ -163,11 +171,12 @@ def test_data_loss_on_update(ckan_client):
     check_dataset(updated_dataset, expected_updated_dataset)
 
 
-def test_updating_extras(ckan_client):
+def test_updating_extras(request, ckan_client):
     ## First, create the dataset
     our_dataset = prepare_dataset(ckan_client, OUR_DATASET)
     created_dataset = ckan_client.post_dataset(our_dataset)
     dataset_id = created_dataset['id']
+    request.addfinalizer(lambda: ckan_client.delete_dataset(dataset_id))
 
     def update_and_check(updates, expected):
         updated_dataset = ckan_client.update_dataset(dataset_id, updates)
@@ -234,7 +243,7 @@ def test_updating_extras(ckan_client):
     update_and_check({'extras': extras_update}, expected_updated_dataset)
 
 
-def test_extras_bad_behavior(ckan_client):
+def test_extras_bad_behavior(request, ckan_client):
     dataset = {
         'name': gen_dataset_name(),
         'title': "Test dataset",
@@ -242,6 +251,7 @@ def test_extras_bad_behavior(ckan_client):
     }
     created = ckan_client.post_dataset(dataset)
     dataset_id = created['id']
+    request.addfinalizer(lambda: ckan_client.delete_dataset(dataset_id))
     assert created['extras'] == {'a': 'aa', 'b': 'bb', 'c': 'cc'}
 
     ## Update #1: omitting extras will.. flush it!
@@ -289,6 +299,45 @@ def test_extras_bad_behavior(ckan_client):
     assert updated['extras'] == {}
 
 
+def test_delete_dataset(ckan_client):
+    our_dataset = prepare_dataset(ckan_client, OUR_DATASET)
+    created_dataset = ckan_client.post_dataset(our_dataset)
+    dataset_id = created_dataset['id']
+
+    dataset_ids = ckan_client.list_datasets()
+    assert dataset_id in dataset_ids
+
+    ## Now delete
+    ckan_client.delete_dataset(dataset_id)
+
+    ## Anonymous users cannot see the dataset
+    anon_client = ckan_client.anonymous
+    dataset_ids = anon_client.list_datasets()
+    assert dataset_id not in dataset_ids
+    with pytest.raises(HTTPError) as excinfo:
+        anon_client.get_dataset(dataset_id)
+    assert excinfo.value.status_code in (403, 404)  # :(
+
+    ## Administrators can still access deleted dataset
+    deleted_dataset = ckan_client.get_dataset(dataset_id)
+    assert deleted_dataset['state'] == 'deleted'
+
+    ## But it's still gone from the list
+    dataset_ids = ckan_client.list_datasets()
+    assert dataset_id not in dataset_ids
+
+    # ## Yay! Let's delete everything!
+    # dataset_ids = ckan_client.list_datasets()
+    # deleted = set()
+    # for dataset_id in dataset_ids[:10]:
+    #     ckan_client.delete_dataset(dataset_id)
+    #     deleted.add(dataset_id)
+
+    # ## Check that they're really gone!
+    # dataset_ids = ckan_client.list_datasets()
+    # assert deleted.intersection(dataset_ids) == set()
+
+
 ##----------------------------------------------------------------------
 ## Utility functions
 ##----------------------------------------------------------------------
@@ -298,7 +347,9 @@ def prepare_dataset(ckan_client, base):
 
     ## We need to change name, as it must be unique
 
-    our_dataset['name'] = 'dataset-{0}'.format(int(time.time()))
+    dataset_name = gen_dataset_name()
+    our_dataset['name'] = dataset_name
+    our_dataset['title'] = "Test dataset {0}".format(dataset_name)
 
     ## Figure out the groups
 
