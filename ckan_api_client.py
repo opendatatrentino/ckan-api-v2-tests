@@ -151,14 +151,27 @@ class CkanClient(object):
         ## Extras fields
         ##----------------------------------------
 
-        updates_dict['extras'] = dict(original_dataset['extras'])
+        ## WARNING! Behavior here is quite "funky":
 
-        if 'extras' in updates:
-            for key, value in updates['extra']:
-                if value is None:
-                    updates_dict.pop(key, None)
-                else:
-                    updates_dict['extras'] = value
+        ## db: {'a': 'aa', 'b': 'bb', 'c': 'cc'}
+        ## update: (no extras key)
+        ## result: {}
+
+        ## db: {'a': 'aa', 'b': 'bb', 'c': 'cc'}
+        ## update: {'a': 'foo'}
+        ## result: {'a': 'foo', 'b': 'bb', 'c': 'cc'}
+
+        EXTRAS_FIELD = 'extras'  # avoid confusion
+
+        updates_dict[EXTRAS_FIELD] = dict(original_dataset[EXTRAS_FIELD])
+
+        if EXTRAS_FIELD in updates:
+            for key, value in updates[EXTRAS_FIELD].iteritems():
+                updates_dict[EXTRAS_FIELD][key] = value
+                # if value is None:
+                #     updates_dict.pop(key, None)
+                # else:
+                #     updates_dict[EXTRAS_FIELD][key] = value
 
         FIELDS_THAT_NEED_TO_BE_PASSED = [
             'groups', 'resources', 'relationships'
