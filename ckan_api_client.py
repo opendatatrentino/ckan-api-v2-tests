@@ -189,7 +189,7 @@ class CkanClient(object):
             yield self.get_organization(org_id)
 
     def get_organization(self, organization_id):
-        path = '/api/3/action/organization_list'
+        path = '/api/3/action/organization_show?id={0}'.format(organization_id)
         response = self.request('GET', path)
         return response.json()['result']
 
