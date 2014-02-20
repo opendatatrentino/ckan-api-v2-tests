@@ -71,3 +71,4 @@ def test_simple_dataset_crud(ckan_client):
     assert updated_dataset == expected_dataset
 
     ## Delete the dataset
+    ckan_client.delete_dataset(dataset_id)
