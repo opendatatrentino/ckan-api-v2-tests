@@ -12,3 +12,19 @@
 A Ckan instance and the API key for a sysadmin user of that instance.
 Beware that data will be written and potentially messed up on that
 instance.
+
+
+## Preparing the Ckan instance
+
+```console
+CONF_FILE="production.ini"
+paster --plugin=ckan make-config ckan "$CONF_FILE"
+
+paster --plugin=ckan db --config="$CONF_FILE" init
+paster --plugin=ckan search-index --config="$CONF_FILE" rebuild
+
+paster --plugin=ckan user --config="$CONF_FILE" add admin email=admin@e.com
+paster --plugin=ckan sysadmin --config="$CONF_FILE" add admin
+
+paster --plugin=ckan serve "$CONF_FILE"
+```
