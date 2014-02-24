@@ -3,6 +3,7 @@ Ckan API client
 """
 
 import copy
+import functools
 import json
 import urlparse
 
@@ -83,6 +84,71 @@ class ApiBadBehavior(Exception):
     pass
 
 
+##----------------------------------------------------------------------
+## Typechecker validators are used here as the only way to
+## try make some order in this mess of API returning unexpected things.
+## They might come in handy when refactoring Ckan code too, btw..
+##----------------------------------------------------------------------
+
+
+def _validate(validator, value):
+    if validator is None:
+        return True
+    if isinstance(validator, type):
+        return isinstance(value, validator)
+    if callable(validator):
+        return validator(value)
+    raise TypeError("Invalid validator type: {0}".format(type(validator)))
+
+
+def check_arg_types(*a_types, **kw_types):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapped(*a, **kw):
+            # Validate arguments
+            for validator, value in zip(a_types, a):
+                if not _validate(validator, value):
+                    raise TypeError("Invalid argument type")
+
+            # Validate keyword arguments
+            for key, validator in kw_types.iteritems():
+                if key not in kw:
+                    continue
+                value = kw[key]
+                if not _validate(validator, value):
+                    raise TypeError("Invalid argument type")
+
+            # Actually call the function
+            return func(*a, **kw)
+        return wrapped
+    return decorator
+
+
+def check_retval(checker):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapped(*a, **kw):
+            retval = func(*a, **kw)
+            if not _validate(checker, retval):
+                raise TypeError("Invalid return value")
+            return retval
+        return wrapped
+    return decorator
+
+
+def is_list_of(type_):
+    def inner(obj):
+        if not isinstance(obj, list):
+            return False
+        return all(isinstance(x, type_) for x in obj)
+    return inner
+
+
+##----------------------------------------------------------------------
+## Actual client classes
+##----------------------------------------------------------------------
+
+
 class CkanClient(object):
     def __init__(self, base_url, api_key=None):
         self.base_url = base_url
@@ -122,6 +188,7 @@ class CkanClient(object):
     ## Datasets
     ##============================================================
 
+    @check_retval(is_list_of(basestring))
     def list_datasets(self):
         path = '/api/2/rest/dataset'
         response = self.request('GET', path)
@@ -131,21 +198,29 @@ class CkanClient(object):
         for ds_id in self.list_datasets():
             yield self.get_dataset(ds_id)
 
+    @check_arg_types(None, basestring)
+    @check_retval(dict)
     def get_dataset(self, dataset_id):
         path = '/api/2/rest/dataset/{0}'.format(dataset_id)
         response = self.request('GET', path)
         return response.json()
 
+    @check_arg_types(None, dict)
+    @check_retval(dict)
     def post_dataset(self, dataset):
         path = '/api/2/rest/dataset'
         response = self.request('POST', path, data=dataset)
         return response.json()
 
+    @check_arg_types(None, basestring, dict)
+    @check_retval(dict)
     def put_dataset(self, dataset_id, dataset):
         path = '/api/2/rest/dataset/{0}'.format(dataset_id)
         response = self.request('PUT', path, data=dataset)
         return response.json()
 
+    @check_arg_types(None, basestring, dict)
+    @check_retval(dict)
     def update_dataset(self, dataset_id, updates):
         """
         Trickery to perform a safe partial update of a dataset.
@@ -236,6 +311,7 @@ class CkanClient(object):
 
         return self.put_dataset(dataset_id, updates_dict)
 
+    @check_arg_types(None, basestring, ignore_404=bool)
     def delete_dataset(self, dataset_id, ignore_404=True):
         ign404 = SuppressExceptionIf(
             lambda e: ignore_404 and (e.status_code == 404))
@@ -252,6 +328,7 @@ class CkanClient(object):
     ## are not handled / returned by this one!
     ##------------------------------------------------------------
 
+    @check_retval(is_list_of(basestring))
     def list_groups(self):
         path = '/api/2/rest/group'
         response = self.request('GET', path)
@@ -262,24 +339,29 @@ class CkanClient(object):
         for group_id in all_groups:
             yield self.get_group(group_id)
 
+    @check_arg_types(None, basestring)
+    @check_retval(dict)
     def get_group(self, group_id):
         path = '/api/2/rest/group/{0}'.format(group_id)
         response = self.request('GET', path)
         return response.json()
 
+    @check_arg_types(None, dict)
+    @check_retval(dict)
     def post_group(self, group):
         path = '/api/2/rest/group'
         response = self.request('POST', path, data=group)
         return response.json()
 
+    @check_arg_types(None, basestring, dict)
+    @check_retval(dict)
     def put_group(self, group_id, group):
         path = '/api/2/rest/group/{0}'.format(group_id)
         response = self.request('PUT', path, data=group)
         data = response.json()
-        if not isinstance(data, dict):
-            raise ApiBadBehavior("Bad value returned from the API")
         return data
 
+    @check_arg_types(None, basestring, ignore_404=bool)
     def delete_group(self, group_id, ignore_404=True):
         ign404 = SuppressExceptionIf(
             lambda e: ignore_404 and (e.status_code == 404))
@@ -290,6 +372,8 @@ class CkanClient(object):
         with ign404:
             self.request('POST', path, data={'id': group_id})
 
+    @check_arg_types(None, basestring, dict)
+    @check_retval(dict)
     def update_group(self, group_id, updates):
         """
         Trickery to perform a safe partial update of a group.
@@ -342,6 +426,8 @@ class CkanClient(object):
 
         return self.put_group(group_id, updates_dict)
 
+    @check_arg_types(None, dict)
+    @check_retval(dict)
     def upsert_group(self, group):
         """
         Try to "upsert" a group, by name.
@@ -358,7 +444,8 @@ class CkanClient(object):
         if 'id' in group:
             raise ValueError("You shouldn't specify a group id already!")
 
-        # Groups should be returned by name too (hopefully..)
+        ## Get the group
+        ## Groups should be returned by name too (hopefully..)
         try:
             _retr_group = self.get_group(group['name'])
         except HTTPError:
@@ -366,8 +453,7 @@ class CkanClient(object):
 
         if _retr_group is None:
             ## Just insert the group and return its id
-            _ins_group = self.post_group(group)
-            return _ins_group['id']
+            return self.post_group(group)
 
         updates = {}
         if _retr_group['state'] == 'deleted':
@@ -378,6 +464,7 @@ class CkanClient(object):
 
         updated_dict = copy.deepcopy(group)
         updated_dict.update(updates)
+
         return self.update_group(_retr_group['id'], updated_dict)
 
     ##============================================================
@@ -389,6 +476,7 @@ class CkanClient(object):
     ## doing things with organizations..
     ##------------------------------------------------------------
 
+    @check_retval(is_list_of(basestring))
     def list_organizations(self):
         path = '/api/3/action/organization_list'
         response = self.request('GET', path)
@@ -398,16 +486,20 @@ class CkanClient(object):
         for org_id in self.list_organizations():
             yield self.get_organization(org_id)
 
+    @check_arg_types(None, basestring)
+    @check_retval(dict)
     def get_organization(self, organization_id):
         path = '/api/3/action/organization_show?id={0}'.format(organization_id)
         response = self.request('GET', path)
         return response.json()['result']
 
+    @check_retval(dict)
     def post_organization(self, organization):
         path = '/api/3/action/organization_create'
         response = self.request('POST', path, data=organization)
         return response.json()['result']
 
+    @check_retval(dict)
     def put_organization(self, organization_id, organization):
         organization['id'] = organization_id
         path = '/api/3/action/organization_update'
@@ -428,6 +520,7 @@ class CkanClient(object):
     ## Licenses
     ##============================================================
 
+    @check_retval(is_list_of(dict))
     def list_licenses(self):
         path = '/api/2/rest/licenses'
         response = self.request('GET', path)
@@ -437,11 +530,13 @@ class CkanClient(object):
     ## Tags
     ##============================================================
 
+    @check_retval(is_list_of(basestring))
     def list_tags(self):
         path = '/api/2/rest/tag'
         response = self.request('GET', path)
         return response.json()
 
+    @check_retval(is_list_of(dict))
     def list_datasets_with_tag(self, tag_id):
         path = '/api/2/rest/tag/{0}'.format(tag_id)
         response = self.request('GET', path)
