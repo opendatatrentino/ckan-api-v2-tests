@@ -78,6 +78,11 @@ class HTTPError(Exception):
         return "HTTPError [{0}]: {1}".format(self.status_code, self.message)
 
 
+class ApiBadBehavior(Exception):
+    """Exception used to mark bad behavior from the API"""
+    pass
+
+
 class CkanClient(object):
     def __init__(self, base_url, api_key=None):
         self.base_url = base_url
@@ -270,7 +275,10 @@ class CkanClient(object):
     def put_group(self, group_id, group):
         path = '/api/2/rest/group/{0}'.format(group_id)
         response = self.request('PUT', path, data=group)
-        return response.json()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ApiBadBehavior("Bad value returned from the API")
+        return data
 
     def delete_group(self, group_id, ignore_404=True):
         ign404 = SuppressExceptionIf(
@@ -345,6 +353,7 @@ class CkanClient(object):
 
         :return: the group object
         """
+
         # Try getting group..
         if 'id' in group:
             raise ValueError("You shouldn't specify a group id already!")
