@@ -14,10 +14,10 @@ from ConfigParser import RawConfigParser
 import os
 import sys
 import subprocess
-import time
 import urlparse
 
 import psycopg2
+import psycopg2.extras
 import solr
 
 
@@ -44,13 +44,13 @@ def get_postgres_connection(host, port, user, password, database):
 def recreate_db(admin_connection, user, database):
     ## Try dropping database
     ##----------------------------------------
-    color_print('36', "Dropping database (if exists) {0}".format(database))
+    color_print('1;36', "Dropping database (if exists) {0}".format(database))
     cur = admin_connection.cursor()
     cur.execute("""DROP DATABASE IF EXISTS "{0}";""".format(database))
 
     ## Recreate database
     ##----------------------------------------
-    color_print('36',
+    color_print('1;36',
                 "Creating database {0} (owned by {1})".format(database, user))
     cursor = admin_connection.cursor()
     cursor.execute("""
@@ -68,7 +68,7 @@ def rebuild_db_schema(conf_file):
     ## Run paster to recreate schema
     ##----------------------------------------
 
-    color_print('36', "Running paster db init")
+    color_print('1;36', "Running paster db init")
     command = ['paster', '--plugin=ckan', 'db',
                '--conf={0}'.format(conf_file), 'init']
     subprocess.call(command)
@@ -84,22 +84,32 @@ def flush_solr(solr_url, site_id):
 
 
 def reindex_solr(conf_file):
-    color_print('36', "Running paster search-index rebuild")
+    color_print('1;36', "Running paster search-index rebuild")
     command = ['paster', '--plugin=ckan', 'search-index',
                '--conf={0}'.format(conf_file), 'rebuild']
     subprocess.call(command)
 
 
-def create_superuser(conf_file):
-    color_print('36', "Creating admin user")
+def create_superuser(conf_file, conn):
+    username = 'admin'
+
+    color_print('1;36', "Creating admin user: {0}".format(username))
     command = ['paster', '--plugin=ckan', 'user',
                '--conf={0}'.format(conf_file), 'add',
-               'admin', 'email=admin@e.com', 'password=admin']
+               username, 'email={0}@e.com'.format(username),
+               'password=password']
     subprocess.call(command)
-    color_print('36', "Setting as sysadmin")
+
+    color_print('1;36', "Setting as sysadmin")
     command = ['paster', '--plugin=ckan', 'sysadmin',
-               '--conf={0}'.format(conf_file), 'add', 'admin']
+               '--conf={0}'.format(conf_file), 'add', username]
     subprocess.call(command)
+
+    ## Fetch the newly created user object
+    cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cur.execute('SELECT "name", "apikey" FROM "user" WHERE name=\'{0}\''
+                .format(username))
+    return cur.fetchone()
 
 
 def url_to_pg_credentials(url):
@@ -164,4 +174,12 @@ if __name__ == '__main__':
     reindex_solr(CONF_FILE)
 
     ## And create superuser
-    create_superuser(CONF_FILE)
+    user_connection = get_postgres_connection(**credentials)
+    user = create_superuser(CONF_FILE, user_connection)
+    apikey = user['apikey']
+
+    ## Store API key
+    color_print("1;32", "Newly created user (admin:password) "
+                "has api key: {0}".format(apikey))
+    with open('.apikey', 'w') as f:
+        f.write(apikey)
