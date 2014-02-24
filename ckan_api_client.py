@@ -353,11 +353,19 @@ class CkanClient(object):
         ## all and then re-add only the needed ones...
         ##============================================================
 
+        ## WTF --- WTF --- WTF --- WTF --- WTF --- WTF --- WTF --- WTF
+
+        ## Note: behavior is still uncertain here!
+        ## Looks like that if the passed-in groups are a subset, the
+        ## extra ones are removed; but if there are extra ones, nothing
+        ## is removed..
+
         ## WARNING
         updates_dict['groups'] = (
             updates['group']
             if 'group' in updates
-            else [])  # original_dataset['groups']
+            # else [])
+            else original_dataset['groups'])
 
         ##############################################################
         ## todo: update relationships

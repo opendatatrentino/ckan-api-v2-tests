@@ -197,7 +197,7 @@ def test_updating_groups(request, ckan_client):
     }
 
     dummy_groups = []
-    for x in xrange(5):
+    for x in xrange(10):
         code = gen_random_id()
         group = ckan_client.post_group({
             'name': 'group-{0}'.format(code),
@@ -219,15 +219,20 @@ def test_updating_groups(request, ckan_client):
 
     # Let's try updating the dataset with empty groups
     updated = ckan_client.update_dataset(dataset_id, {'groups': []})
-    assert sorted(updated['groups']) == sorted(dataset['groups'])  # WTF?
+    assert sorted(updated['groups']) \
+        == sorted(dataset['groups'])  # WTF? -- should be empty
+
+    ## APPARENTLY, if we pass a subset of the datasets, the extra ones
+    ## will just get deleted.
 
     # Let's play around a bit..
-    new_groups = dummy_groups[:3]
-    updated = ckan_client.update_dataset(dataset_id, {'groups': new_groups})
-    assert sorted(updated['groups']) == sorted(dataset['groups'])
-
-    # Let's play around a bit..
-    new_groups = dummy_groups[7:9]
+    new_groups = [x['id'] for x in dummy_groups[:3]]
     updated = ckan_client.update_dataset(dataset_id, {'groups': new_groups})
     assert sorted(updated['groups']) \
-        == sorted(dataset['groups'] + dummy_groups[7:9])
+        == sorted(dataset['groups'] + new_groups)  # WTF?
+
+    # Let's play around a bit..
+    new_groups = [x['id'] for x in dummy_groups[7:9]]
+    updated = ckan_client.update_dataset(dataset_id, {'groups': new_groups})
+    assert sorted(updated['groups']) \
+        == sorted(new_groups)  # WTF?
