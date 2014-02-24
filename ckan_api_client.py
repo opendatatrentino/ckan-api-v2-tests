@@ -6,6 +6,7 @@ import copy
 import functools
 import json
 import urlparse
+import warnings
 
 import requests
 
@@ -79,8 +80,21 @@ class HTTPError(Exception):
         return "HTTPError [{0}]: {1}".format(self.status_code, self.message)
 
 
-class ApiBadBehavior(Exception):
+class BadApiError(Exception):
     """Exception used to mark bad behavior from the API"""
+    pass
+
+
+class BadApiWarning(UserWarning):
+    """Warning to mark bad behavior from the API"""
+    pass
+
+
+class SomethingWentWrong(Exception):
+    """
+    Exception to indicate that something went wrong during
+    a data import.. :(
+    """
     pass
 
 
@@ -179,6 +193,10 @@ class CkanClient(object):
         response = requests.request(method, url, **kwargs)
         if not response.ok:
             ## todo: attach message, if any available..
+            ## todo: we should find a way to figure out how to attach
+            ##       original text message to the exception
+            ##       as it might be: json string, part of json object,
+            ##       part of html document
             raise HTTPError(response.status_code,
                             "Error while performing request")
 
@@ -215,6 +233,17 @@ class CkanClient(object):
     @check_arg_types(None, basestring, dict)
     @check_retval(dict)
     def put_dataset(self, dataset_id, dataset):
+        """
+        PUT a dataset (for update).
+
+        .. warning::
+
+            ``update_dataset()`` should be used instead, in normal cases,
+            as it automatically takes care of a lot of needed workarounds
+            to prevent data loss.
+
+            Calling this method directly is almost never adviced or required.
+        """
         path = '/api/2/rest/dataset/{0}'.format(dataset_id)
         response = self.request('PUT', path, data=dataset)
         return response.json()
@@ -224,15 +253,35 @@ class CkanClient(object):
     def update_dataset(self, dataset_id, updates):
         """
         Trickery to perform a safe partial update of a dataset.
+
+        WARNING: This method contains tons of hacks to try and fix
+                 major issues with the API.
+
+        In particular, remember that:
+
+        - Extras are updated incrementally. To delete a key, just set
+          it to None.
+
+        - Groups are merged. There is apparently no way to remove one.
+
+        Fixes that are in place:
+
+        - If the extras field is not specified on update, all extras will
+          be deleted. To prevent this, we default it to {}.
+
+        - If the groups field is not specified on update, all groups will
+          be removed. To prevent this, we default it to [].
         """
 
-        ##-----[!!]----------- IMPORTANT NOTE ---------------[!!]-----
+        ##=====[!!]=========== IMPORTANT NOTE ===============[!!]=====
         ## - "core" fields seems to be kept
         ## - ..but "extras" need to be passed back again
-        ## - groups?
+        ## - ..same behavior for groups: no way to delete them,
+        ##   apparently.. a part from flushing 'em all by omitting
+        ##   the field...
         ## - resources?
         ## - relationships?
-        ##------------------------------------------------------------
+        ##============================================================
 
         original_dataset = self.get_dataset(dataset_id)
 
@@ -240,9 +289,9 @@ class CkanClient(object):
         ## for performing the update
         updates_dict = {'id': dataset_id}
 
-        ##--------------------------------------------------
+        ##############################################################
         ## Core fields
-        ##--------------------------------------------------
+        ##------------------------------------------------------------
 
         for field in DATASET_FIELDS['core']:
             if field in updates:
@@ -250,11 +299,11 @@ class CkanClient(object):
             else:
                 updates_dict[field] = original_dataset[field]
 
-        ##--------------------------------------------------
+        ##############################################################
         ## Extras fields
-        ##--------------------------------------------------
+        ##------------------------------------------------------------
 
-        ##-----------( !! IMPORTANT NOTE !! )---------------
+        ##=====[!!]=========== IMPORTANT NOTE ===============[!!]=====
         ## WARNING! Behavior here is quite "funky":
         ##
         ## db: {'a': 'aa', 'b': 'bb', 'c': 'cc'}
@@ -268,7 +317,7 @@ class CkanClient(object):
         ## db: {'a': 'aa', 'b': 'bb', 'c': 'cc'}
         ## update: {}
         ## db: {'a': 'aa', 'b': 'bb', 'c': 'cc'}
-        ##--------------------------------------------------
+        ##============================================================
 
         EXTRAS_FIELD = 'extras'  # to avoid confusion
 
@@ -278,10 +327,13 @@ class CkanClient(object):
             # Notes: setting a field to 'None' will delete it.
             updates_dict[EXTRAS_FIELD].update(updates[EXTRAS_FIELD])
 
+        ##############################################################
         ## These fields need to be passed again or it will just
         ## be flushed..
+        ##------------------------------------------------------------
+
         FIELDS_THAT_NEED_TO_BE_PASSED = [
-            'groups', 'resources', 'relationships'
+            'resources', 'relationships'
         ]
         for field in FIELDS_THAT_NEED_TO_BE_PASSED:
             if field in updates:
@@ -289,25 +341,39 @@ class CkanClient(object):
             else:
                 updates_dict[field] = original_dataset[field]
 
-        ##--------------------------------------------------
-        ## todo: update groups
-        ##--------------------------------------------------
+        ##############################################################
+        ## Update groups
+        ##------------------------------------------------------------
 
-        ##--------------------------------------------------
+        ##=====[!!]=========== IMPORTANT NOTE ===============[!!]=====
+        ## If the 'groups' key is omitted, all the groups relations
+        ## are deleted.
+        ## Otherwise, groups are just added. So the only way to
+        ## "properly" remove a dataset from a group is to flush 'em
+        ## all and then re-add only the needed ones...
+        ##============================================================
+
+        ## WARNING
+        updates_dict['groups'] = (
+            updates['group']
+            if 'group' in updates
+            else [])  # original_dataset['groups']
+
+        ##############################################################
         ## todo: update relationships
-        ##--------------------------------------------------
+        ##------------------------------------------------------------
 
-        ##--------------------------------------------------
+        ##############################################################
         ## todo: update tags
-        ##--------------------------------------------------
+        ##------------------------------------------------------------
 
-        ##--------------------------------------------------
+        ##############################################################
         ## todo: update resources
-        ##--------------------------------------------------
+        ##------------------------------------------------------------
 
-        ##--------------------------------------------------
+        ##############################################################
         ## Actually perform the update
-        ##--------------------------------------------------
+        ##------------------------------------------------------------
 
         return self.put_dataset(dataset_id, updates_dict)
 
@@ -323,10 +389,10 @@ class CkanClient(object):
     ## Groups
     ##============================================================
 
-    ##-----[!!]----------- IMPORTANT NOTE ---------------[!!]-----
+    ##=====[!!]=========== IMPORTANT NOTE ===============[!!]=====
     ## BEWARE! API v2 only considers actual groups, organizations
     ## are not handled / returned by this one!
-    ##------------------------------------------------------------
+    ##============================================================
 
     @check_retval(is_list_of(basestring))
     def list_groups(self):
@@ -548,7 +614,18 @@ class CkanClient(object):
 
 
 class CkanDataImportClient(object):
-    """Client to handle importing data in ckan"""
+    """
+    Client to handle importing data in ckan
+
+    Needs:
+
+    - Synchronize a collection of datasets with a filtered
+      subset of Ckan datasets
+
+    - Also upsert "dependency" objects, such as groups and
+      organizations, in order to be able to link them with newly-created
+      datasets.
+    """
 
     source_field_name = '_harvest_source'
     source_id_field_name = '_harvest_source_id'
@@ -562,7 +639,7 @@ class CkanDataImportClient(object):
         self.client = CkanClient(base_url, api_key)
         self.source_name = source_name
 
-    def sync_data(self, data):
+    def sync_data(self, data, double_check=True):
         """
         Import data into Ckan
 
@@ -570,19 +647,103 @@ class CkanDataImportClient(object):
             Dict (or dict-like) mapping object types to
             dicts (key/object) (key is the original key)
         """
-        # We need to:
 
-        # - Make sure all the referenced organizations are there
-        # -> create a map from our ids to ckan ids
+        ## First, compare desired status with database status
+        differences = self.verify_data(data)
 
-        # - Make sure all the referenced groups are there
-        # -> create a map from our ids to ckan ids
+        ## Map <name>:<id>
+        group_name_to_id = {}
+        org_name_to_id = {}
 
-        # - Import datasets (check differences -> update)
-        # -> create a map from our ids to ckan ids
-        pass
+        for objid, obj in data['group']:
+            obj = obj.copy()  # Let's leave the original untouched
+            obj['name'] = objid
+            group_name_to_id[objid] = self.upsert_group(obj)['id']
+
+        for objid, obj in data['organization']:
+            obj = obj.copy()  # Let's leave the original untouched
+            obj['name'] = objid
+            org_name_to_id[objid] = self.upsert_organization(obj)['id']
+
+        ## Then, do everything necessary to bring database in
+        ## the desired status (apply differences)
+
+        ## Double-check
+        ##----------------------------------------
+
+        if double_check:
+            errors = 0
+            differences = self.verify_data(data)
+
+            if len(differences['dataset']['new']) > 0:
+                errors += 1
+                warnings.warn("Some dataset has not been created correctly")
+
+            if len(differences['dataset']['updated']) > 0:
+                errors += 1
+                warnings.warn("Some dataset has not been updated correctly")
+
+            if len(differences['dataset']['deleted']) > 0:
+                errors += 1
+                warnings.warn("Some dataset has not been deleted correctly")
+
+            # todo: check groups/orgs too!
+
+            if errors > 0:
+                raise SomethingWentWrong(
+                    "Something went wrong while performing updates.")
+
+    def _verify_datasets(self, datasets):
+        our_datasets = dict(
+            (x['extras'][self.source_field_name], x)
+            for x in self._find_our_datasets())
+
+        new_datasets = []
+        updated_datasets = []
+
+        for dataset_id, dataset in datasets.iteritems():
+            existing_dataset = our_datasets.pop(dataset_id, None)
+            if existing_dataset is None:
+                ## This dataset is missing in the database
+                new_datasets.append(dataset_id)
+            elif not self._check_dataset(existing_dataset, dataset):
+                ## This dataset differs from the one in the database
+                updated_datasets.append(dataset_id)
+
+        ## Remaining datasets are in the db but have been deleted in
+        ## the new collection.
+        deleted_datasets = list(our_datasets)
+
+        return {
+            'new': new_datasets,
+            'updated': updated_datasets,
+            'deleted': deleted_datasets,
+        }
+
+    def verify_data(self, data):
+        """
+        Verify that data in Ckan is consistent with the desired state.
+        Return a dictionary representing differences.
+
+        :return: a dict representing differences between the two collections.
+            The first level is the collection name.
+            Each seconf-level dictionary has the following keys:
+
+            * new: ids of objects that are in data but not in ckan
+            * deleted: ids of objects that are in ckan but not in data
+            * updated: ids of objects that have been updated
+        """
+
+        return {
+            'dataset': self._verify_datasets(data['datasets']),
+            'group': {'new': [], 'updated': [], 'deleted': []},
+            'organization': {'new': [], 'updated': [], 'deleted': []},
+        }
 
     def _is_our_dataset(self, dataset):
+        """
+        Check whether a dataset is associated with this harvest source
+        """
         try:
             dataset_source = dataset['extras'][self.source_field_name]
         except KeyError:
@@ -590,6 +751,40 @@ class CkanDataImportClient(object):
         return dataset_source == self.source_name
 
     def _find_our_datasets(self):
+        """
+        Iterate dataset, yield only the ones that match this source
+        """
         for dataset in self.client.iter_datasets():
             if self._is_our_dataset(dataset):
                 yield dataset
+
+    def _check_dataset(self, dataset, expected):
+        """
+        Make sure all the data in ``expected`` is also in ``dataset``
+        """
+        ## Need to check core fields for equality
+
+        ## Need to check extras (compare dicts)
+
+        ## Need to check resources: trickier, as we cannot rely on IDs
+        ## -> use URLs as IDs
+
+        ## Need to check groups
+        ## -> Maybe, it would be better to leave them unchanged, just
+        ##    make sure required groups are associated
+
+        ## Need to check relationships (wtf is that, btw?)
+
+        return True
+
+    def _check_group(self, group, expected):
+        """
+        Make sure all the data in ``expected`` is also in ``group``
+        """
+        return True
+
+    def _check_organization(self, organization, expected):
+        """
+        Make sure all the data in ``expected`` is also in ``organization``
+        """
+        return True
