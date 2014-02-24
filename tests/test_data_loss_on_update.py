@@ -212,3 +212,22 @@ def test_updating_groups(request, ckan_client):
     dataset_id = created['id']
     request.addfinalizer(lambda: ckan_client.delete_dataset(dataset_id))
     assert sorted(created['groups']) == sorted(dataset['groups'])
+
+    # Let's try updating the dataset w/o groups
+    updated = ckan_client.update_dataset(dataset_id, {'title': "My dataset"})
+    assert sorted(updated['groups']) == sorted(dataset['groups'])
+
+    # Let's try updating the dataset with empty groups
+    updated = ckan_client.update_dataset(dataset_id, {'groups': []})
+    assert sorted(updated['groups']) == sorted(dataset['groups'])  # WTF?
+
+    # Let's play around a bit..
+    new_groups = dummy_groups[:3]
+    updated = ckan_client.update_dataset(dataset_id, {'groups': new_groups})
+    assert sorted(updated['groups']) == sorted(dataset['groups'])
+
+    # Let's play around a bit..
+    new_groups = dummy_groups[7:9]
+    updated = ckan_client.update_dataset(dataset_id, {'groups': new_groups})
+    assert sorted(updated['groups']) \
+        == sorted(dataset['groups'] + dummy_groups[7:9])
