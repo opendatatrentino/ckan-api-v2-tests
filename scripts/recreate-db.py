@@ -14,10 +14,20 @@ from ConfigParser import RawConfigParser
 import os
 import sys
 import subprocess
+import time
 import urlparse
 
 import psycopg2
 import solr
+
+
+def color_print(col, *a, **kw):
+    sep = kw.get('sep', ' ')
+    a = ['\033[{0}m'.format(col),
+         sep.join(a),
+         '\033[0m']
+    kw['sep'] = ''
+    return print(*a, **kw)
 
 
 def get_postgres_connection(host, port, user, password, database):
@@ -34,13 +44,14 @@ def get_postgres_connection(host, port, user, password, database):
 def recreate_db(admin_connection, user, database):
     ## Try dropping database
     ##----------------------------------------
-    print("Dropping database (if exists) {0}".format(database))
+    color_print('36', "Dropping database (if exists) {0}".format(database))
     cur = admin_connection.cursor()
     cur.execute("""DROP DATABASE IF EXISTS "{0}";""".format(database))
 
     ## Recreate database
     ##----------------------------------------
-    print("Creating database {0} (owned by {1})".format(database, user))
+    color_print('36',
+                "Creating database {0} (owned by {1})".format(database, user))
     cursor = admin_connection.cursor()
     cursor.execute("""
     CREATE DATABASE "{db}"
@@ -57,7 +68,7 @@ def rebuild_db_schema(conf_file):
     ## Run paster to recreate schema
     ##----------------------------------------
 
-    print("Running paster db init")
+    color_print('36', "Running paster db init")
     command = ['paster', '--plugin=ckan', 'db',
                '--conf={0}'.format(conf_file), 'init']
     subprocess.call(command)
@@ -73,9 +84,21 @@ def flush_solr(solr_url, site_id):
 
 
 def reindex_solr(conf_file):
-    print("Running paster search-index rebuild")
+    color_print('36', "Running paster search-index rebuild")
     command = ['paster', '--plugin=ckan', 'search-index',
                '--conf={0}'.format(conf_file), 'rebuild']
+    subprocess.call(command)
+
+
+def create_superuser(conf_file):
+    color_print('36', "Creating admin user")
+    command = ['paster', '--plugin=ckan', 'user',
+               '--conf={0}'.format(conf_file), 'add',
+               'admin', 'email=admin@e.com', 'password=admin']
+    subprocess.call(command)
+    color_print('36', "Setting as sysadmin")
+    command = ['paster', '--plugin=ckan', 'sysadmin',
+               '--conf={0}'.format(conf_file), 'add', 'admin']
     subprocess.call(command)
 
 
@@ -139,3 +162,6 @@ if __name__ == '__main__':
     ## Then, rebuild schemas
     rebuild_db_schema(CONF_FILE)
     reindex_solr(CONF_FILE)
+
+    ## And create superuser
+    create_superuser(CONF_FILE)
