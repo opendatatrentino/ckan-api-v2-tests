@@ -28,3 +28,34 @@ paster --plugin=ckan sysadmin --config="$CONF_FILE" add admin
 
 paster --plugin=ckan serve "$CONF_FILE"
 ```
+
+
+## Recreating database
+
+You can use ``scripts/recreate-db.py`` to recreate database / solr index.
+Specifically, it will:
+
+- drop and recreate postgresql database
+- delete everything from the Solr index
+- recreate database schema, using paster
+- rebuild search index
+- create and 'admin' user, make it superuser
+- store the 'admin' api key in ``.apikey`` for reuse
+
+Environment variables:
+
+- ``CKAN_CONF`` should point to a Ckan configuration file.
+  If omitted, configuration file will be searched in ``$VIRTUAL_ENV/etc/ckan/production.ini``.
+
+- ``PG_ADMIN`` colon-separated administrative access credentials
+  to postgresql. Example: ``postgres:password``
+
+
+## Running tests
+
+Use ``run-server.sh`` to launch paster server (note: client will try connecting
+on port 8000, make sure you configured it correctly in ``production.ini``).
+
+Use ``run-tests.sh`` to run tests using py.test.
+The script accepts extra arguments that will be appended to py.test command,
+for example I usually run it as ``./run-tests.sh -vvv --pdb``.
