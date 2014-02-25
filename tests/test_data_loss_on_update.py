@@ -23,8 +23,33 @@ them from being deleted.
 
 import copy
 
-from .utils import (prepare_dataset, check_dataset, check_group,
-                    gen_random_id, gen_dataset_name)
+import pytest
+
+from .utils import prepare_dataset, check_dataset
+
+
+## Tests for updating datasets
+# DATASET_UPDATE_TESTS = [
+#     (
+#         'just-name-and-title',
+#         {'name': 'dataset-1', 'title': 'Dataset #1'},
+#         {'title': 'Dataset #1 - new title'},
+#         {'name': 'dataset-1', 'title': 'Dataset #1 - new title'}
+#     ),
+#     (
+#         'update-name',
+#         {'name': 'dataset-2', 'title': 'Dataset #2'},
+#         {'name': 'dataset-2-new'},
+#         {'name': 'dataset-2-new', 'title': 'Dataset #2'}
+#     ),
+# ]
+
+# _DATASET_UPDATE_TESTS_DICT = dict((x[0], x[1:]) for x in DATASET_UPDATE_TESTS)  # noqa
+
+
+# @pytest.fixture(scope='module', params=[x[0] for x in DATASET_UPDATE_TESTS])
+# def dataset_update_case(request):
+#     return _DATASET_UPDATE_TESTS_DICT[request.param]
 
 
 def test_data_loss_on_update(request, ckan_client):
@@ -61,178 +86,25 @@ def test_data_loss_on_update(request, ckan_client):
     check_dataset(updated_dataset, expected_updated_dataset)
 
 
-def test_updating_extras(request, ckan_client):
-    ## First, create the dataset
-    our_dataset = prepare_dataset(ckan_client)
-    created_dataset = ckan_client.post_dataset(our_dataset)
-    dataset_id = created_dataset['id']
-    request.addfinalizer(lambda: ckan_client.delete_dataset(dataset_id))
+# def test_dataset_update(request, ckan_client, dataset_update_case):
+#     initial, updates, expected = dataset_update_case
 
-    def update_and_check(updates, expected):
-        updated_dataset = ckan_client.update_dataset(dataset_id, updates)
-        retrieved_dataset = ckan_client.get_dataset(dataset_id)
-        assert updated_dataset == retrieved_dataset
-        check_dataset(updated_dataset, expected)
+#     created = ckan_client.post_dataset(initial)
+#     request.addfinalizer(lambda: ckan_client.delete_dataset(created['id']))
 
-    ##------------------------------------------------------------
-    ## Update #1: add some extras
+#     check_dataset(created, initial)
 
-    extras_update = {'field-1': 'value-1', 'field-2': 'value-2'}
-    expected_updated_dataset = copy.deepcopy(our_dataset)
-    expected_updated_dataset['extras'].update({
-        'field-1': 'value-1',
-        'field-2': 'value-2',
-    })
-    update_and_check({'extras': extras_update}, expected_updated_dataset)
+#     created_r = ckan_client.get_dataset(created['id'])
+#     assert created_r == created
 
-    ##------------------------------------------------------------
-    ## Update #1: change a field
+#     updated = ckan_client.update_dataset(created['id'], updates)
+#     check_dataset(updated, updates)
+#     check_dataset(updated, expected)
 
-    extras_update = {'field-1': 'value-1-VERSION2'}
-    expected_updated_dataset = copy.deepcopy(our_dataset)
-    expected_updated_dataset['extras'].update({
-        'field-1': 'value-1-VERSION2',
-        'field-2': 'value-2',
-    })
-    update_and_check({'extras': extras_update}, expected_updated_dataset)
+#     updated_r = ckan_client.get_dataset(created['id'])
+#     assert updated_r == updated
 
-    ##------------------------------------------------------------
-    ## Update #3: change a field, add another
-
-    extras_update = {'field-1': 'value-1-VERSION3', 'field-3': 'value-3'}
-    expected_updated_dataset = copy.deepcopy(our_dataset)
-    expected_updated_dataset['extras'].update({
-        'field-1': 'value-1-VERSION3',
-        'field-2': 'value-2',
-        'field-3': 'value-3',
-    })
-    update_and_check({'extras': extras_update}, expected_updated_dataset)
-
-    ##------------------------------------------------------------
-    ## Update #4: delete a field
-
-    extras_update = {'field-3': None}
-    expected_updated_dataset = copy.deepcopy(our_dataset)
-    expected_updated_dataset['extras'].update({
-        'field-1': 'value-1-VERSION3',
-        'field-2': 'value-2',
-    })
-    update_and_check({'extras': extras_update}, expected_updated_dataset)
-
-    ##------------------------------------------------------------
-    ## Update #5: add + update + delete
-
-    extras_update = {'field-1': 'NEW_VALUE', 'field-2': None,
-                     'field-3': 'hello', 'field-4': 'world'}
-    expected_updated_dataset = copy.deepcopy(our_dataset)
-    expected_updated_dataset['extras'].update({
-        'field-1': 'NEW_VALUE',
-        'field-3': 'hello',
-        'field-4': 'world',
-    })
-    update_and_check({'extras': extras_update}, expected_updated_dataset)
-
-
-def test_extras_bad_behavior(request, ckan_client):
-    dataset = {
-        'name': gen_dataset_name(),
-        'title': "Test dataset",
-        'extras': {'a': 'aa', 'b': 'bb', 'c': 'cc'},
-    }
-    created = ckan_client.post_dataset(dataset)
-    dataset_id = created['id']
-    request.addfinalizer(lambda: ckan_client.delete_dataset(dataset_id))
-    assert created['extras'] == {'a': 'aa', 'b': 'bb', 'c': 'cc'}
-
-    ## Update #1: omitting extras will.. flush it!
-    updated = ckan_client.put_dataset(dataset_id, {
-        'id': dataset_id,
-        'name': dataset['name'],
-        'title': dataset['title'],
-        # 'extras' intentionally omitted
-    })
-    assert updated['extras'] == {}
-
-    ## Update #2: re-add some extras
-    updated = ckan_client.put_dataset(dataset_id, {
-        'id': dataset_id,
-        'name': dataset['name'],
-        'title': dataset['title'],
-        'extras': {'a': 'aa', 'b': 'bb', 'c': 'cc'},
-    })
-    assert updated['extras'] == {'a': 'aa', 'b': 'bb', 'c': 'cc'}
-
-    ## Update #3: partial extras will just update
-    updated = ckan_client.put_dataset(dataset_id, {
-        'id': dataset_id,
-        'name': dataset['name'],
-        'title': dataset['title'],
-        'extras': {'a': 'UPDATED'},
-    })
-    assert updated['extras'] == {'a': 'UPDATED', 'b': 'bb', 'c': 'cc'}
-
-    ## Update #4: empty extras has no effect
-    updated = ckan_client.put_dataset(dataset_id, {
-        'id': dataset_id,
-        'name': dataset['name'],
-        'title': dataset['title'],
-        'extras': {},
-    })
-    assert updated['extras'] == {'a': 'UPDATED', 'b': 'bb', 'c': 'cc'}
-
-    ## Update #5: this is fucked up, man..
-    updated = ckan_client.put_dataset(dataset_id, {
-        'id': dataset_id,
-        'name': dataset['name'],
-        'title': dataset['title'],
-    })
-    assert updated['extras'] == {}
-
-
-def test_updating_groups(request, ckan_client):
-    dataset = {
-        'name': gen_dataset_name(),
-        'title': "Test dataset",
-        'groups': []
-    }
-
-    dummy_groups = []
-    for x in xrange(10):
-        code = gen_random_id()
-        group = ckan_client.post_group({
-            'name': 'group-{0}'.format(code),
-            'title': 'Group {0}'.format(code),
-        })
-        dummy_groups.append(group)
-        request.addfinalizer(lambda: ckan_client.delete_group(group['id']))
-
-    dataset['groups'] = [x['id'] for x in dummy_groups[:5]]
-
-    created = ckan_client.post_dataset(dataset)
-    dataset_id = created['id']
-    request.addfinalizer(lambda: ckan_client.delete_dataset(dataset_id))
-    assert sorted(created['groups']) == sorted(dataset['groups'])
-
-    # Let's try updating the dataset w/o groups
-    updated = ckan_client.update_dataset(dataset_id, {'title': "My dataset"})
-    assert sorted(updated['groups']) == sorted(dataset['groups'])
-
-    # Let's try updating the dataset with empty groups
-    updated = ckan_client.update_dataset(dataset_id, {'groups': []})
-    assert sorted(updated['groups']) \
-        == sorted(dataset['groups'])  # WTF? -- should be empty
-
-    ## APPARENTLY, if we pass a subset of the datasets, the extra ones
-    ## will just get deleted.
-
-    # Let's play around a bit..
-    new_groups = [x['id'] for x in dummy_groups[:3]]
-    updated = ckan_client.update_dataset(dataset_id, {'groups': new_groups})
-    assert sorted(updated['groups']) \
-        == sorted(dataset['groups'] + new_groups)  # WTF?
-
-    # Let's play around a bit..
-    new_groups = [x['id'] for x in dummy_groups[7:9]]
-    updated = ckan_client.update_dataset(dataset_id, {'groups': new_groups})
-    assert sorted(updated['groups']) \
-        == sorted(new_groups)  # WTF?
+#     # todo: we should check differences between created and updated.
+#     #       update shouldn't have affected more non-cruft fields than
+#     #       the ones specified in the update, which should have been
+#     #       set to the expected value.

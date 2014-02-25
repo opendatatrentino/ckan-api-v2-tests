@@ -105,7 +105,7 @@ class SomethingWentWrong(Exception):
 ##----------------------------------------------------------------------
 
 
-def _validate(validator, value):
+def validate(validator, value):
     if validator is None:
         return True
     if isinstance(validator, type):
@@ -113,6 +113,9 @@ def _validate(validator, value):
     if callable(validator):
         return validator(value)
     raise TypeError("Invalid validator type: {0}".format(type(validator)))
+
+
+_validate = validate  # Compatibility
 
 
 def check_arg_types(*a_types, **kw_types):
@@ -153,9 +156,57 @@ def check_retval(checker):
 def is_list_of(type_):
     def inner(obj):
         if not isinstance(obj, list):
-            return False
-        return all(isinstance(x, type_) for x in obj)
+            raise TypeError("Object is not a list")
+
+        if not all(isinstance(x, type_) for x in obj):
+            raise TypeError("A value in the list is not a {0!r}".format(type_))
+
+        return True
     return inner
+
+
+def is_dict_of(key_type, value_type):
+    def inner(obj):
+        if not isinstance(obj, dict):
+            raise TypeError("Object is not a dict")
+
+        for key, value in obj.iteritems():
+            validate(key, key_type)
+            validate(value, value_type)
+
+        return True
+    return inner
+
+
+def validate_dataset(dataset):
+    """Do some checking on a dataset object"""
+    # todo: what about extra fields? should be warn in case we have some?
+    if not isinstance(dataset, dict):
+        raise ValueError("Dataset must be a dict")
+
+    if 'extras' in dataset:
+        if not isinstance(dataset['extras'], dict):
+            raise ValueError("Dataset extras must be a dict")
+        for key, value in dataset['extras'].iteritems():
+            if not isinstance(key, basestring):
+                raise ValueError("Extras keys must be strings")
+            if (value is not None) and (not isinstance(value, basestring)):
+                raise ValueError("Extras values must be strings (or None)")
+
+    if 'groups' in dataset:
+        if not isinstance(dataset['groups'], list):
+            raise ValueError("Dataset groups must be a list")
+        if not all(isinstance(x, basestring) for x in dataset['groups']):
+            raise ValueError("Dataset groups must be a list of strings")
+
+    if 'resources' in dataset:
+        if not isinstance(dataset['resources'], list):
+            raise ValueError("Resources must be a list")
+        if not all(isinstance(x, dict) for x in dataset['resources']):
+            raise ValueError("Dataset resources must be a list of dicts")
+        # todo: validate each single resource object too..?
+
+    return True  # Validation passed
 
 
 ##----------------------------------------------------------------------
@@ -223,14 +274,14 @@ class CkanClient(object):
         response = self.request('GET', path)
         return response.json()
 
-    @check_arg_types(None, dict)
+    @check_arg_types(None, validate_dataset)
     @check_retval(dict)
     def post_dataset(self, dataset):
         path = '/api/2/rest/dataset'
         response = self.request('POST', path, data=dataset)
         return response.json()
 
-    @check_arg_types(None, basestring, dict)
+    @check_arg_types(None, basestring, validate_dataset)
     @check_retval(dict)
     def put_dataset(self, dataset_id, dataset):
         """
@@ -248,7 +299,7 @@ class CkanClient(object):
         response = self.request('PUT', path, data=dataset)
         return response.json()
 
-    @check_arg_types(None, basestring, dict)
+    @check_arg_types(None, basestring, validate_dataset)
     @check_retval(dict)
     def update_dataset(self, dataset_id, updates):
         """
@@ -262,7 +313,8 @@ class CkanClient(object):
         - Extras are updated incrementally. To delete a key, just set
           it to None.
 
-        - Groups are merged. There is apparently no way to remove one.
+        - Groups might accept objects too, but behavior is quite undefined
+          in that case.. so don't do that.
 
         Fixes that are in place:
 
@@ -346,30 +398,23 @@ class CkanClient(object):
         ##------------------------------------------------------------
 
         ##=====[!!]=========== IMPORTANT NOTE ===============[!!]=====
-        ## If the 'groups' key is omitted, all the groups relations
-        ## are deleted.
-        ## Otherwise, groups are just added. So the only way to
-        ## "properly" remove a dataset from a group is to flush 'em
-        ## all and then re-add only the needed ones...
+        ## - If the groups key is omitted, all groups are deleted
+        ## - It seems to be possible to specify groups as objects too,
+        ##   but exact behavior is uncertain, so we only accept
+        ##   strings here (ids), otherwise object will not pass
+        ##   validation.
         ##============================================================
 
-        ## WTF --- WTF --- WTF --- WTF --- WTF --- WTF --- WTF --- WTF
-
-        ## Note: behavior is still uncertain here!
-        ## Looks like that if the passed-in groups are a subset, the
-        ## extra ones are removed; but if there are extra ones, nothing
-        ## is removed..
-
-        ## WARNING
         updates_dict['groups'] = (
             updates['group']
             if 'group' in updates
-            # else [])
             else original_dataset['groups'])
 
         ##############################################################
         ## todo: update relationships
         ##------------------------------------------------------------
+
+        # todo: WTF are relationships?
 
         ##############################################################
         ## todo: update tags
@@ -701,33 +746,6 @@ class CkanDataImportClient(object):
                 raise SomethingWentWrong(
                     "Something went wrong while performing updates.")
 
-    def _verify_datasets(self, datasets):
-        our_datasets = dict(
-            (x['extras'][self.source_field_name], x)
-            for x in self._find_our_datasets())
-
-        new_datasets = []
-        updated_datasets = []
-
-        for dataset_id, dataset in datasets.iteritems():
-            existing_dataset = our_datasets.pop(dataset_id, None)
-            if existing_dataset is None:
-                ## This dataset is missing in the database
-                new_datasets.append(dataset_id)
-            elif not self._check_dataset(existing_dataset, dataset):
-                ## This dataset differs from the one in the database
-                updated_datasets.append(dataset_id)
-
-        ## Remaining datasets are in the db but have been deleted in
-        ## the new collection.
-        deleted_datasets = list(our_datasets)
-
-        return {
-            'new': new_datasets,
-            'updated': updated_datasets,
-            'deleted': deleted_datasets,
-        }
-
     def verify_data(self, data):
         """
         Verify that data in Ckan is consistent with the desired state.
@@ -796,3 +814,54 @@ class CkanDataImportClient(object):
         Make sure all the data in ``expected`` is also in ``organization``
         """
         return True
+
+    def _verify_datasets(self, datasets):
+        our_datasets = dict(
+            (x['extras'][self.source_field_name], x)
+            for x in self._find_our_datasets())
+
+        new_datasets = []
+        updated_datasets = []
+
+        for dataset_id, dataset in datasets.iteritems():
+            existing_dataset = our_datasets.pop(dataset_id, None)
+            if existing_dataset is None:
+                ## This dataset is missing in the database
+                new_datasets.append(dataset_id)
+            elif not self._check_dataset(existing_dataset, dataset):
+                ## This dataset differs from the one in the database
+                updated_datasets.append(dataset_id)
+
+        ## Remaining datasets are in the db but have been deleted in
+        ## the new collection.
+        deleted_datasets = list(our_datasets)
+
+        return {
+            'new': new_datasets,
+            'updated': updated_datasets,
+            'deleted': deleted_datasets,
+        }
+
+    @check_arg_types(None, is_dict_of(basestring, dict))
+    @check_retval(is_dict_of(basestring, basestring))
+    def _ensure_groups(self, groups):
+        """
+        Make sure the specified groups exist in Ckan.
+
+        :param groups: a {'name': <group>} dict
+        :return: a {'name': 'ckan-id'} dict
+        """
+
+        results = {}
+        for group_name, group in groups.iteritems():
+            group['name'] = group_name
+            c_group = self.client.upsert_group(group)
+            results[group_name] = c_group['id']
+            pass
+        pass
+
+    def _ensure_organizations(self, organizations):
+        pass
+
+    def _sync_datasets(self, datasets):
+        pass

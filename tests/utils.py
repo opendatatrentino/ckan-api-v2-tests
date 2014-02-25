@@ -183,30 +183,43 @@ def get_dummy_group(ckan_client):
 
 def check_dataset(dataset, expected):
     """
-    Check that a dataset matches the expected one
-    """
-    for field in DATASET_FIELDS['core']:
-        assert dataset[field] == expected[field]
+    Check that a dataset matches the expected one.
 
-    assert dataset['extras'] == expected['extras']
-    assert sorted(dataset['groups']) == sorted(expected['groups'])
+    - check all core fields
+    - check extras, if specified
+    - check groups, if specified
+
+    WARNING: This function uses asserts, only use in your test code!
+    """
+
+    for field in DATASET_FIELDS['core']:
+        if field in expected:
+            assert dataset[field] == expected[field]
+
+    if 'extras' in expected:
+        assert dataset['extras'] == expected['extras']
+
+    if 'groups' in expected:
+        assert sorted(dataset['groups']) == sorted(expected['groups'])
 
     ## Check resources
-    _dataset_resources = dict((x['url'], x) for x in dataset['resources'])
-    _expected_resources = dict((x['url'], x) for x in expected['resources'])
+    if 'resources' in expected:
+        _dataset_resources = dict((x['url'], x) for x in dataset['resources'])
+        _expected_resources = dict((x['url'], x)
+                                   for x in expected['resources'])
 
-    assert len(_dataset_resources) == len(dataset['resources'])
-    assert len(_expected_resources) == len(expected['resources'])
-    assert len(_dataset_resources) == len(_expected_resources)
+        assert len(_dataset_resources) == len(dataset['resources'])
+        assert len(_expected_resources) == len(expected['resources'])
+        assert len(_dataset_resources) == len(_expected_resources)
 
-    assert sorted(_dataset_resources.iterkeys()) \
-        == sorted(_expected_resources.iterkeys())
+        assert sorted(_dataset_resources.iterkeys()) \
+            == sorted(_expected_resources.iterkeys())
 
-    for key in _dataset_resources:
-        _resource = _dataset_resources[key]
-        _expected = _expected_resources[key]
-        for field in RESOURCE_FIELDS['core']:
-            assert _resource[field] == _expected[field]
+        for key in _dataset_resources:
+            _resource = _dataset_resources[key]
+            _expected = _expected_resources[key]
+            for field in RESOURCE_FIELDS['core']:
+                assert _resource[field] == _expected[field]
 
 
 def check_group(group, expected):
