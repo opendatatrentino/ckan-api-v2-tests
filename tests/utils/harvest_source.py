@@ -18,7 +18,8 @@ HARVEST_SOURCE_NAME = 'dummy-harvest-source'
 
 
 class HarvestSource(Mapping):
-    """Provides dict-like access to harvest sources
+    """
+    Provides dict-like access to harvest sources
     """
 
     source_name = HARVEST_SOURCE_NAME
@@ -31,14 +32,6 @@ class HarvestSource(Mapping):
         """
         self.base_dir = base_dir
         self.day = day
-
-    # def iter_objects(self, objtype):
-    #     folder = os.path.join(DATA_DIR, self.day, objtype)
-    #     for filename in os.listdir(folder):
-    #         filepath = os.path.join(folder, filename)
-    #         with open(filepath, 'r') as f:
-    #             data = json.load(f)
-    #         yield data
 
     def __getitem__(self, name):
         if name not in self.__iter__():
@@ -62,7 +55,7 @@ class HarvestSource(Mapping):
             yield name
 
     def __len__(self):
-        return len(self.__iter__())
+        return len(list(self.__iter__()))
 
 
 class HarvestSourceCollection(Mapping):
@@ -101,4 +94,4 @@ class HarvestSourceCollection(Mapping):
             yield name
 
     def __len__(self):
-        return len(self.__iter__())
+        return len(list(self.__iter__()))

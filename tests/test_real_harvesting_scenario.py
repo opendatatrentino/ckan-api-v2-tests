@@ -30,24 +30,6 @@ HARVEST_SOURCE_KEY = '_harvest_source'
 HARVEST_ID_KEY = '_harvest_id'
 
 
-def HarvestSource(object):
-    def __init__(self, day):
-        """
-        :param day:
-            The day from which to get data.
-            Full name, like 'day-00', 'day-01', ..
-        """
-        self.day = day
-
-    def iter_objects(self, objtype):
-        folder = os.path.join(DATA_DIR, self.day, objtype)
-        for filename in os.listdir(folder):
-            filepath = os.path.join(folder, filename)
-            with open(filepath, 'r') as f:
-                data = json.load(f)
-            yield data
-
-
 def _collection_to_dict(coll):
     return dict((item['id'], item) for item in coll)
 
