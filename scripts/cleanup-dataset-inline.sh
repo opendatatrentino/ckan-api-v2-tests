@@ -15,7 +15,7 @@ JQ_QUERY+="resources: [.resources[] | {url,url_type,format,description,"
 JQ_QUERY+="name,resource_type}],state,tags,title,type,url}"
 
 for INPUT in "$@"; do
-    cat "$INPUT" | jq "$JQ_QUERY" > "$TEMPFILE"
+    cat "$INPUT" | jq --sort-keys "$JQ_QUERY" > "$TEMPFILE"
     cat "$TEMPFILE" > "$INPUT"
 done
 

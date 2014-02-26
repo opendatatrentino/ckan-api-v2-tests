@@ -12,7 +12,7 @@ fi
 JQ_QUERY="{description,extras,id,image_url,name,tags,title}"
 
 for INPUT in "$@"; do
-    cat "$INPUT" | jq "$JQ_QUERY" > "$TEMPFILE"
+    cat "$INPUT" | jq --sort-keys "$JQ_QUERY" > "$TEMPFILE"
     cat "$TEMPFILE" > "$INPUT"
 done
 
