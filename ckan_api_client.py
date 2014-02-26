@@ -290,7 +290,7 @@ class CkanClient(object):
         Just a wrapper around post_dataset() right now, but
         might come in handy in the future to add workarounds..
         """
-        return self.post_dataset(self, dataset)
+        return self.post_dataset(dataset)
 
     @check_arg_types(None, basestring, validate_dataset)
     @check_retval(dict)
@@ -724,13 +724,46 @@ class CkanDataImportClient(object):
             'created': [],
         }
 
+        def _prepare_group(group):
+            # The original id is moved into name.
+            # Better not messing with these fields..
+            group.pop('id', None)
+            group.pop('name', None)
+            return group
+
+        def _prepare_organization(obj):
+            return _prepare_group(obj)
+
+        def _map_dict(f, d, k):
+            """
+            Take function f, dict d and key name k,
+            iter dict items, pass them to f and put the
+            result in a dict, using k as key.
+            """
+            result = {}
+            for key, val in d.iteritems():
+                p = f(key, val)
+                result[p[k]] = p
+            return result
+
         ##----------------------------------------
         ## Maps 'source_id' -> 'ckan_id' for
         ## organizations and groups.
         ##----------------------------------------
 
-        groups_map = self._ensure_groups(data['group'])
-        organizations_map = self._ensure_organizations(data['organization'])
+        groups_map = self._ensure_groups(
+            dict(
+                (k, _prepare_group(g))
+                for k, g in data['group'].iteritems()
+                )
+            )
+
+        organizations_map = self._ensure_organizations(
+            dict(
+                (k, _prepare_organization(g))
+                for k, g in data['organization'].iteritems()
+                )
+            )
 
         ##----------------------------------------
         ## Obtain differences between datasets
@@ -740,11 +773,31 @@ class CkanDataImportClient(object):
 
         def _prepare_dataset(dataset):
             dataset = copy.deepcopy(dataset)
+
+            ## Pop the id, as it is not to be used as key
+            ## - for creates, id will be generated
+            ## - for updates, id is passed separately
+            source_id = dataset.pop('id')
+
+            ## Note: we cannot handle name change here, as we don't
+            ## know whether the dataset is new or going to be updated
+
+            ## Map group names to ids
             dataset['groups'] = [
                 groups_map[x]
-                for x in dataset['group_names']
+                for x in (dataset.get('group_names') or [])
                 if x in groups_map]
-            dataset['owner_org'] = organizations_map.get(dataset['owner_org'])
+
+            ## Map organization name to id
+            dataset['owner_org'] = organizations_map.get(
+                dataset.get('owner_org'))
+
+            ## We need to mark this dataset as ours
+            if 'extras' not in dataset:
+                dataset['extras'] = {}
+            dataset['extras'][self.source_field_name] = self.source_name
+            dataset['extras'][self.source_id_field_name] = source_id
+
             return dataset
 
         ##----------------------------------------
@@ -757,6 +810,9 @@ class CkanDataImportClient(object):
 
             # todo: we need to make sure we use a unique name
             #       for the newly created dataset!
+
+            # -> keep a set of used names and hope for the best..
+
             # todo: how to generate default name, if not specified?
 
             created = self.client.create_dataset(dataset)
@@ -776,6 +832,7 @@ class CkanDataImportClient(object):
 
             ## Update dataset
             dataset = _prepare_dataset(data['dataset'][idpair.source_id])
+            dataset.pop('name', None)
 
             # todo: we should ignore name changes, as they might cause
             #       Unique key problems.. plus, users might have
@@ -803,70 +860,34 @@ class CkanDataImportClient(object):
             assert idpair.ckan_id is not None
             self.client.delete_dataset(idpair.ckan_id)
 
-        ## First, compare desired status with database status
-        differences = self.verify_data(data)
-
-        ## Map <name>:<id>
-        group_name_to_id = {}
-        org_name_to_id = {}
-
-        for objid, obj in data['group']:
-            obj = obj.copy()  # Let's leave the original untouched
-            obj['name'] = objid
-            group_name_to_id[objid] = self.upsert_group(obj)['id']
-
-        for objid, obj in data['organization']:
-            obj = obj.copy()  # Let's leave the original untouched
-            obj['name'] = objid
-            org_name_to_id[objid] = self.upsert_organization(obj)['id']
-
-        ## Then, do everything necessary to bring database in
-        ## the desired status (apply differences)
-
+        ##----------------------------------------
         ## Double-check
         ##----------------------------------------
 
         if double_check:
             errors = 0
-            differences = self.verify_data(data)
+            differences = self._verify_datasets(data['dataset'])
 
-            if len(differences['dataset']['new']) > 0:
+            if len(differences['missing']) > 0:
                 errors += 1
-                warnings.warn("Some dataset has not been created correctly")
+                warnings.warn("We still have ({0}) datasets marked as missing"
+                              .format(len(differences['missing'])))
 
-            if len(differences['dataset']['updated']) > 0:
+            if len(differences['updated']) > 0:
                 errors += 1
-                warnings.warn("Some dataset has not been updated correctly")
+                warnings.warn("We still have ({0}) datasets marked as updated"
+                              .format(len(differences['updated'])))
 
-            if len(differences['dataset']['deleted']) > 0:
+            if len(differences['deleted']) > 0:
                 errors += 1
-                warnings.warn("Some dataset has not been deleted correctly")
+                warnings.warn("We still have ({0}) datasets marked as deleted"
+                              .format(len(differences['deleted'])))
 
             # todo: check groups/orgs too!
 
             if errors > 0:
                 raise SomethingWentWrong(
                     "Something went wrong while performing updates.")
-
-    # def verify_data(self, data):
-    #     """
-    #     Verify that data in Ckan is consistent with the desired state.
-    #     Return a dictionary representing differences.
-
-    #     :return: a dict representing differences between the two collections.
-    #         The first level is the collection name.
-    #         Each seconf-level dictionary has the following keys:
-
-    #         * new: ids of objects that are in data but not in ckan
-    #         * deleted: ids of objects that are in ckan but not in data
-    #         * updated: ids of objects that have been updated
-    #     """
-
-    #     return {
-    #         'dataset': self._verify_datasets(data['datasets']),
-    #         'group': {'new': [], 'updated': [], 'deleted': []},
-    #         'organization': {'new': [], 'updated': [], 'deleted': []},
-    #     }
 
     def _is_our_dataset(self, dataset):
         """
@@ -890,18 +911,36 @@ class CkanDataImportClient(object):
         """
         Check whether dataset is up to date with expected..
         """
-        ## todo: write this function
 
-        ## Need to check core fields for equality
+        for field in DATASET_FIELDS['core']:
+            if field in expected:
+                assert dataset[field] == expected[field]
 
-        ## Need to check extras (compare dicts)
+        if 'extras' in expected:
+            assert dataset['extras'] == expected['extras']
 
-        ## Need to check resources: trickier, as we cannot rely on IDs
-        ## -> use URLs as IDs
+        if 'groups' in expected:
+            assert sorted(dataset['groups']) == sorted(expected['groups'])
 
-        ## Need to check groups
-        ## -> Maybe, it would be better to leave them unchanged, just
-        ##    make sure required groups are associated
+        ## Check resources
+        if 'resources' in expected:
+            _dataset_resources = dict((x['url'], x)
+                                      for x in dataset['resources'])
+            _expected_resources = dict((x['url'], x)
+                                       for x in expected['resources'])
+
+            assert len(_dataset_resources) == len(dataset['resources'])
+            assert len(_expected_resources) == len(expected['resources'])
+            assert len(_dataset_resources) == len(_expected_resources)
+
+            assert sorted(_dataset_resources.iterkeys()) \
+                == sorted(_expected_resources.iterkeys())
+
+            for key in _dataset_resources:
+                _resource = _dataset_resources[key]
+                _expected = _expected_resources[key]
+                for field in RESOURCE_FIELDS['core']:
+                    assert _resource[field] == _expected[field]
 
         ## Need to check relationships (wtf is that, btw?)
 
@@ -1003,8 +1042,10 @@ class CkanDataImportClient(object):
         """
         Make sure the specified groups exist in Ckan.
 
-        :param groups: a {'name': <group>} dict
-        :return: a {'name': 'ckan-id'} dict
+        :param groups:
+            a {'name': <group>} dict
+        :return:
+            a {'name': 'ckan-id'} dict
         """
 
         results = {}
@@ -1014,12 +1055,16 @@ class CkanDataImportClient(object):
             results[group_name] = c_group['id']
         return results
 
+    @check_arg_types(None, is_dict_of(basestring, dict))
+    @check_retval(is_dict_of(basestring, basestring))
     def _ensure_organizations(self, organizations):
         """
         Make sure the specified organizations exist in Ckan.
 
-        :param organizations: a {'name': <group>} dict
-        :return: a {'name': 'ckan-id'} dict
+        :param organizations:
+            a {'name': <group>} dict
+        :return: a {'name':
+            'ckan-id'} dict
         """
 
         results = {}

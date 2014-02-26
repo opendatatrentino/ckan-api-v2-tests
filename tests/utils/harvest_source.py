@@ -6,13 +6,6 @@ from collections import Mapping
 import os
 import json
 
-import pytest
-
-from ckan_api_client import CkanClient
-
-
-HERE = os.path.abspath(os.path.dirname(__file__))
-DATA_DIR = os.path.join(os.path.dirname(HERE), 'data', 'datitrentino')
 
 HARVEST_SOURCE_NAME = 'dummy-harvest-source'
 
@@ -22,6 +15,7 @@ class HarvestSource(Mapping):
     Provides dict-like access to harvest sources
     """
 
+    ## Default harvest source..
     source_name = HARVEST_SOURCE_NAME
 
     def __init__(self, base_dir, day):
@@ -59,6 +53,10 @@ class HarvestSource(Mapping):
 
 
 class HarvestSourceCollection(Mapping):
+    """
+    Wrapper around a "collection" of items in the "harvest source".
+    """
+
     def __init__(self, source, name):
         self.source = source
         self.name = name
@@ -72,8 +70,10 @@ class HarvestSourceCollection(Mapping):
 
         with open(path, 'r') as f:
             data = json.load(f)
-
-        # todo: apply customizations/cleanup, if needed?
+            if 'id' in data:
+                if data['id'] != name:
+                    raise ValueError("Mismatching dataset id -- bad data?")
+            data['id'] = name  # make sure we pass it back
 
         return data
 
@@ -86,9 +86,9 @@ class HarvestSourceCollection(Mapping):
             if name.startswith('.'):
                 continue
 
-            ## Skip non-directories
+            ## Skip non-files
             path = os.path.join(folder, name)
-            if not os.path.isdir(path):
+            if not os.path.isfile(path):
                 continue
 
             yield name

@@ -24,6 +24,7 @@ def test_utils_harvest_source():
         assert item['id'] == item_id
         dataset_count += 1
     assert len(hs['dataset']) == dataset_count
+    assert dataset_count > 0
 
     organization_count = 0
     for item_id in hs['organization']:
@@ -34,6 +35,7 @@ def test_utils_harvest_source():
         assert item['id'] == item_id
         organization_count += 1
     assert len(hs['organization']) == organization_count
+    assert organization_count > 0
 
     group_count = 0
     for item_id in hs['group']:
@@ -44,3 +46,4 @@ def test_utils_harvest_source():
         assert item['id'] == item_id
         group_count += 1
     assert len(hs['group']) == group_count
+    assert group_count > 0
