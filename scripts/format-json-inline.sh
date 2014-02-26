@@ -10,7 +10,7 @@ if [ -z "$1" ]; then
 fi
 
 for INPUT in "$@"; do
-    cat "$INPUT" | jq . > "$TEMPFILE"
+    cat "$INPUT" | jq --sort-keys . > "$TEMPFILE"
     cat "$TEMPFILE" > "$INPUT"
 done
 
