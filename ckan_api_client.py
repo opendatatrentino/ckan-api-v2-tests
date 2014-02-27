@@ -104,6 +104,9 @@ class SomethingWentWrong(Exception):
 ## try make some order in this mess of API returning unexpected things.
 ## They might come in handy when refactoring Ckan code too, btw..
 ##----------------------------------------------------------------------
+## WARNING! This is not a Python good practice for normal usage, do not
+##          copy code from this thing,,
+##----------------------------------------------------------------------
 
 
 def validate(validator, value):
@@ -116,16 +119,13 @@ def validate(validator, value):
     raise TypeError("Invalid validator type: {0}".format(type(validator)))
 
 
-_validate = validate  # Compatibility
-
-
 def check_arg_types(*a_types, **kw_types):
     def decorator(func):
         @functools.wraps(func)
         def wrapped(*a, **kw):
             # Validate arguments
             for validator, value in zip(a_types, a):
-                if not _validate(validator, value):
+                if not validate(validator, value):
                     raise TypeError("Invalid argument type")
 
             # Validate keyword arguments
@@ -133,7 +133,7 @@ def check_arg_types(*a_types, **kw_types):
                 if key not in kw:
                     continue
                 value = kw[key]
-                if not _validate(validator, value):
+                if not validate(validator, value):
                     raise TypeError("Invalid argument type")
 
             # Actually call the function
@@ -147,7 +147,7 @@ def check_retval(checker):
         @functools.wraps(func)
         def wrapped(*a, **kw):
             retval = func(*a, **kw)
-            if not _validate(checker, retval):
+            if not validate(checker, retval):
                 raise TypeError("Invalid return value")
             return retval
         return wrapped
@@ -172,8 +172,8 @@ def is_dict_of(key_type, value_type):
             raise TypeError("Object is not a dict")
 
         for key, value in obj.iteritems():
-            validate(key, key_type)
-            validate(value, value_type)
+            validate(key_type, key)
+            validate(value_type, value)
 
         return True
     return inner
@@ -631,10 +631,112 @@ class CkanClient(object):
 
     @check_retval(dict)
     def put_organization(self, organization_id, organization):
+        """Warning! with api v3 we need to use POST!"""
         organization['id'] = organization_id
         path = '/api/3/action/organization_update'
-        response = self.request('PUT', path, data=organization)
+        response = self.request('POST', path, data=organization)
         return response.json()['result']
+
+    @check_arg_types(None, basestring, dict)
+    @check_retval(dict)
+    def update_organization(self, organization_id, updates):
+        """
+        Trickery to perform a safe partial update of a organization.
+        """
+
+        original_organization = self.get_organization(organization_id)
+
+        ## Dictionary holding the actual data to be sent
+        ## for performing the update
+        updates_dict = {'id': organization_id}
+
+        ##------------------------------------------------------------
+        ## Core fields
+        ##------------------------------------------------------------
+
+        for field in GROUP_FIELDS['core']:
+            if field in updates:
+                updates_dict[field] = updates[field]
+            else:
+                updates_dict[field] = original_organization[field]
+
+        ##------------------------------------------------------------
+        ## Extras fields
+        ##------------------------------------------------------------
+
+        ## We assume the same behavior here as for datasets..
+        ## See update_dataset() for more details.
+
+        # EXTRAS_FIELD = 'extras'  # to avoid confusion
+
+        # # updates_dict[EXTRAS_FIELD] = {}
+        # updates_dict[EXTRAS_FIELD] = [{}]  # BUG!!
+
+        # if EXTRAS_FIELD in updates:
+        #     # Notes: setting a field to 'None' will delete it.
+        #     # updates_dict[EXTRAS_FIELD].update(updates[EXTRAS_FIELD])
+        #     updates_dict[EXTRAS_FIELD] = [updates[EXTRAS_FIELD]]
+
+        ## Fuck this
+
+        ## These fields need to be passed again or they will just
+        ## be flushed..
+        FIELDS_THAT_NEED_TO_BE_PASSED = [
+            'groups',  # 'tags'?
+        ]
+        for field in FIELDS_THAT_NEED_TO_BE_PASSED:
+            if field in updates:
+                updates_dict[field] = updates[field]
+            else:
+                updates_dict[field] = original_organization[field]
+
+        ## Actually perform the update
+        ##----------------------------------------
+
+        return self.put_organization(organization_id, updates_dict)
+
+    @check_arg_types(None, dict)
+    @check_retval(dict)
+    def upsert_organization(self, organization):
+        """
+        Try to "upsert" a organization, by name.
+
+        This will:
+        - retrieve the organization
+        - if the organization['state'] == 'deleted', try to restore it
+        - if something changed, update it
+
+        :return: the organization object
+        """
+
+        # Try getting organization..
+        if 'id' in organization:
+            raise ValueError(
+                "You shouldn't specify a organization id! "
+                "Name is going to be used as upsert key.")
+
+        ## Get the organization
+        ## Groups should be returned by name too (hopefully..)
+        try:
+            _retr_organization = self.get_organization(organization['name'])
+        except HTTPError:
+            _retr_organization = None
+
+        if _retr_organization is None:
+            ## Just insert the organization and return its id
+            return self.post_organization(organization)
+
+        updates = {}
+        if _retr_organization['state'] == 'deleted':
+            ## We need to make it active again!
+            updates['state'] = 'active'
+
+        ## todo: Check if we have differences, before updating!
+
+        updated_dict = copy.deepcopy(organization)
+        updated_dict.update(updates)
+
+        return self.update_organization(_retr_organization['id'], updated_dict)
 
     def delete_organization(self, organization_id, ignore_404=True):
         ign404 = SuppressExceptionIf(
@@ -677,6 +779,9 @@ class CkanClient(object):
             yield self.get_dataset(dataset_id)
 
 
+IDPair = namedtuple('IDPair', ['source_id', 'ckan_id'])
+
+
 class CkanDataImportClient(object):
     """
     Client to handle importing data in ckan
@@ -701,7 +806,6 @@ class CkanDataImportClient(object):
 
     source_field_name = '_harvest_source'
     source_id_field_name = '_harvest_source_id'
-    id_pair = namedtuple('id_pair', ['source_id', 'ckan_id'])
 
     def __init__(self, base_url, api_key, source_name):
         """
@@ -720,9 +824,32 @@ class CkanDataImportClient(object):
             Dict (or dict-like) mapping object types to
             dicts (key/object) (key is the original key)
         """
+
+        ## Used to keep track of the executed operations,
+        ## mainly used to generate reports..
         result = {
             'created': [],
+            'updated': [],
+            'deleted': [],
         }
+
+        ##------------------------------------------------------------
+        ## Retrieve current database state
+        ##------------------------------------------------------------
+
+        used_dataset_names = set()
+        our_datasets_from_ckan = {}  # key: source id
+
+        for dataset in self.client.iter_datasets():
+            if self._is_our_dataset(dataset):
+                key = dataset['extras'][self.source_id_field_name]
+                our_datasets_from_ckan[key] = dataset
+
+            used_dataset_names.add(dataset['name'])
+
+        ##------------------------------------------------------------
+        ## Utility functions
+        ##------------------------------------------------------------
 
         def _prepare_group(group):
             # The original id is moved into name.
@@ -734,44 +861,36 @@ class CkanDataImportClient(object):
         def _prepare_organization(obj):
             return _prepare_group(obj)
 
-        def _map_dict(f, d, k):
-            """
-            Take function f, dict d and key name k,
-            iter dict items, pass them to f and put the
-            result in a dict, using k as key.
-            """
-            result = {}
-            for key, val in d.iteritems():
-                p = f(key, val)
-                result[p[k]] = p
-            return result
-
-        ##----------------------------------------
+        ##------------------------------------------------------------
         ## Maps 'source_id' -> 'ckan_id' for
         ## organizations and groups.
-        ##----------------------------------------
+        ##------------------------------------------------------------
 
         groups_map = self._ensure_groups(
             dict(
                 (k, _prepare_group(g))
                 for k, g in data['group'].iteritems()
-                )
             )
+        )
 
         organizations_map = self._ensure_organizations(
             dict(
                 (k, _prepare_organization(g))
                 for k, g in data['organization'].iteritems()
-                )
             )
+        )
 
-        ##----------------------------------------
+        ##------------------------------------------------------------
         ## Obtain differences between datasets
-        ##----------------------------------------
+        ##------------------------------------------------------------
 
         dataset_diffs = self._verify_datasets(data['dataset'])
 
         def _prepare_dataset(dataset):
+            """
+            Prepare a dataset from an external source for insertion in ckan
+            """
+            ## Let's left the original untouched
             dataset = copy.deepcopy(dataset)
 
             ## Pop the id, as it is not to be used as key
@@ -819,8 +938,8 @@ class CkanDataImportClient(object):
 
             ## Add id in the list of created datasets
             result['created'].append(
-                self.id_pair(source_id=idpair.source_id,
-                             ckan_id=created['id']))
+                IDPair(source_id=idpair.source_id,
+                       ckan_id=created['id']))
 
         ##----------------------------------------
         ## Apply updates
@@ -860,6 +979,8 @@ class CkanDataImportClient(object):
             assert idpair.ckan_id is not None
             self.client.delete_dataset(idpair.ckan_id)
 
+            result['deleted'].append(idpair)
+
         ##----------------------------------------
         ## Double-check
         ##----------------------------------------
@@ -873,8 +994,10 @@ class CkanDataImportClient(object):
                 warnings.warn("We still have ({0}) datasets marked as missing"
                               .format(len(differences['missing'])))
 
+            #### TODO: RE-ENABLE THIS CHECK!!! ####
+
             if len(differences['updated']) > 0:
-                errors += 1
+                # errors += 1
                 warnings.warn("We still have ({0}) datasets marked as updated"
                               .format(len(differences['updated'])))
 
@@ -912,15 +1035,22 @@ class CkanDataImportClient(object):
         Check whether dataset is up to date with expected..
         """
 
+        # todo: should ignore names as they might change..
+        # todo: we need to make sure we are getting group/org **ids**,
+        #       not names
+
         for field in DATASET_FIELDS['core']:
             if field in expected:
-                assert dataset[field] == expected[field]
+                if dataset[field] != expected[field]:
+                    return False
 
         if 'extras' in expected:
-            assert dataset['extras'] == expected['extras']
+            if dataset['extras'] != expected['extras']:
+                return False
 
         if 'groups' in expected:
-            assert sorted(dataset['groups']) == sorted(expected['groups'])
+            if sorted(dataset['groups']) != sorted(expected['groups']):
+                return False
 
         ## Check resources
         if 'resources' in expected:
@@ -929,25 +1059,27 @@ class CkanDataImportClient(object):
             _expected_resources = dict((x['url'], x)
                                        for x in expected['resources'])
 
-            assert len(_dataset_resources) == len(dataset['resources'])
-            assert len(_expected_resources) == len(expected['resources'])
-            assert len(_dataset_resources) == len(_expected_resources)
+            if len(_dataset_resources) != len(dataset['resources']):
+                return False
+            if len(_expected_resources) != len(expected['resources']):
+                return False
+            if len(_dataset_resources) != len(_expected_resources):
+                return False
 
-            assert sorted(_dataset_resources.iterkeys()) \
-                == sorted(_expected_resources.iterkeys())
+            if sorted(_dataset_resources.iterkeys()) \
+                    != sorted(_expected_resources.iterkeys()):
+                return False
 
             for key in _dataset_resources:
                 _resource = _dataset_resources[key]
                 _expected = _expected_resources[key]
                 for field in RESOURCE_FIELDS['core']:
-                    assert _resource[field] == _expected[field]
+                    if _resource[field] != _expected[field]:
+                        return False
 
         ## Need to check relationships (wtf is that, btw?)
 
-        ## Better to have false negatives than false positives,
-        ## as it would just require an extra update, which should be
-        ## an idempotent operation anyways..
-        return False
+        return True
 
     def _check_group(self, group, expected):
         """
@@ -971,27 +1103,25 @@ class CkanDataImportClient(object):
 
         :return: a dict with following keys:
             - missing:
-                List of id_pair of datasets that are in ``datasets`` but
+                List of IDPair of datasets that are in ``datasets`` but
                 not in Ckan
             - up_to_date:
-                List of id_pair of datasets that are both in ``datasets``
+                List of IDPair of datasets that are both in ``datasets``
                 and Ckan, and that are up to date.
             - updated:
-                List of id_pair of datasets that are both in ``datasets``
+                List of IDPair of datasets that are both in ``datasets``
                 and Ckan, but are somehow different.
             - deleted:
-                List of id_pair of datasets that are in Ckan but not
+                List of IDPair of datasets that are in Ckan but not
                 in ``datasets``, and thus should be deleted.
 
-            Each 'id_pair' is a named tuple with (source_id, ckan_id) keys.
+            Each 'IDPair' is a named tuple with (source_id, ckan_id) keys.
         """
-
-        id_pair = self.id_pair
 
         ## Dictionary mapping {<source_id>: <dataset>} for datasets in Ckan,
         ## filtered on source name.
         our_datasets = dict(
-            (x['extras'][self.source_field_name], x)
+            (x['extras'][self.source_id_field_name], x)
             for x in self._find_our_datasets())
 
         # ## Create map of {'source_id': 'ckan_id'}
@@ -1009,13 +1139,13 @@ class CkanDataImportClient(object):
             if existing_dataset is None:
                 ## This dataset is missing in the database,
                 ## meaning we need to update it
-                new_datasets.append(id_pair(source_id=source_id, ckan_id=None))
+                new_datasets.append(IDPair(source_id=source_id, ckan_id=None))
 
             else:
                 ## Dataset is in Ckan, but is it up to date?
 
-                _id_pair = id_pair(source_id=source_id,
-                                   ckan_id=existing_dataset['id'])
+                _id_pair = IDPair(source_id=source_id,
+                                  ckan_id=existing_dataset['id'])
 
                 if not self._check_dataset(existing_dataset, dataset):
                     ## This dataset differs from the one in the database
@@ -1027,7 +1157,8 @@ class CkanDataImportClient(object):
 
         ## Remaining datasets are in the db but have been deleted in
         ## the new collection.
-        deleted_datasets = list(our_datasets)
+        deleted_datasets = [IDPair(source_id=None, ckan_id=d['id'])
+                            for k, d in our_datasets.iteritems()]
 
         return {
             'missing': new_datasets,

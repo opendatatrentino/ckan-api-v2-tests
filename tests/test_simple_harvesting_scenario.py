@@ -1,17 +1,5 @@
 """
-Test some "real life" harvesting scenario.
-
-We have "data dumps" of an imaginary catalog for a set of days.
-
-The testing procedure should be run as follows:
-
-1- Get current state of the database
-2- Update data from the "harvest source"
-3- Make sure the database state matches the expected one:
-   - unrelated datasets should still be there
-   - only datasets from this souce should have been changed,
-     and should match the desired state.
-4- Loop for all the days
+Test some simple harvesting scenarios
 """
 
 import os

@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import random
 import string
 
@@ -248,3 +249,19 @@ def gen_random_id(length=10):
 
 def gen_dataset_name():
     return "dataset-{0}".format(gen_random_id())
+
+
+def gen_picture(s, size=200):
+    return gen_robohash(s, size)
+
+
+def gen_gravatar(s, size=200):
+    h = hashlib.md5(s).hexdigest()
+    return ('http://www.gravatar.com/avatar/{0}.jpg'
+            '?d=identicon&f=y&s={1}'.format(h, size))
+
+
+def gen_robohash(s, size=200):
+    h = hashlib.md5(s).hexdigest()
+    return ('http://robohash.org/{0}.png?size={1}x{1}&bgset=bg2&set=set1'
+            .format(h, size))
